@@ -1,36 +1,68 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Trevos Assistant 🤖
 
-## Getting Started
+An AI-powered website assistant designed to help businesses engage website visitors, answer questions, capture potential leads, and automate customer interactions.
 
-First, run the development server:
+## 💡 Why I Built It
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Many business websites rely mainly on contact forms. A visitor may have a question, but instead of getting an immediate response, they have to submit a form and wait for someone to respond.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Trevos Assistant was built to provide an immediate conversational experience.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+It can interact with website visitors, provide information about a business and its services, collect relevant visitor details, and help businesses respond to potential customers even outside normal working hours.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 🚀 Core Capabilities
 
-## Learn More
+- AI-powered visitor conversations
+- Answers questions about a business and its services
+- Lead capture
+- Visitor information collection
+- Conversational customer engagement
+- API-based integrations
+- Automation-ready architecture
+- Persistent application data
+- Authentication and protected application areas
 
-To learn more about Next.js, take a look at the following resources:
+## 🛠️ Technology Stack
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Next.js**
+- **React**
+- **TypeScript**
+- **Node.js**
+- **PostgreSQL**
+- **Prisma**
+- **NextAuth**
+- **OpenAI API**
+- **REST APIs**
+- **n8n**
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 🏗️ Architecture
 
-## Deploy on Vercel
+The application uses a modern full-stack architecture with Next.js handling the application layer and API routes, PostgreSQL for persistent data, Prisma for database access, and OpenAI for AI-powered conversations.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The system is designed to support integrations and automation workflows as the product evolves.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🎯 What This Project Demonstrates
+
+This project demonstrates my experience with:
+
+- Full-stack application development
+- AI API integration
+- Database design and ORM usage
+- Authentication
+- REST APIs
+- Business process automation
+- Building software around real business problems
+- Designing applications intended for real-world business use
+
+## 🔗 Related Projects
+
+### Trevos Suite 360
+A multi-tenant SaaS platform for managing renewals, subscriptions, contracts, domains, hosting, insurance, and other recurring business assets.
+
+### Trevos Watch
+An offline Windows desktop application for tracking business services, expiry dates, records, and automated expiry notifications.
+
+---
+
+**Built by Tochi Eleazar**  
+Software Developer & AI Automation Specialist
