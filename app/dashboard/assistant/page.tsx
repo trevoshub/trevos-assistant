@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 type Assistant = {
   id: number;
   name: string;
+  publicApiKey: string | null;
   status: string;
   welcomeMessage: string | null;
   systemPrompt: string | null;
@@ -79,6 +80,7 @@ export default function AssistantPage() {
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [copiedItem, setCopiedItem] = useState("");
 
   async function loadAssistant() {
     try {
@@ -659,6 +661,30 @@ export default function AssistantPage() {
     }
   }
 
+  const getInstallationCode = () => {
+    if (!assistant?.publicApiKey) return "";
+    const assistantUrl = typeof window !== "undefined"
+      ? window.location.origin
+      : "https://YOUR-TREVOS-ASSISTANT-DOMAIN.com";
+
+    return `<iframe
+  src="${assistantUrl}/widget?apiKey=${assistant.publicApiKey}"
+  title="Trevos Assistant"
+  style="position:fixed;right:20px;bottom:20px;width:380px;height:620px;max-width:calc(100vw - 40px);max-height:calc(100vh - 40px);border:0;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,0.18);z-index:999999;"
+  allow="clipboard-write"
+></iframe>`;
+  };
+
+  async function copyToClipboard(value: string, item: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedItem(item);
+      window.setTimeout(() => setCopiedItem(""), 2000);
+    } catch {
+      setError("Unable to copy to clipboard.");
+    }
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-gray-50 px-6 py-10">
@@ -767,6 +793,57 @@ export default function AssistantPage() {
                   {assistant.monthlyMessageLimit}
                 </p>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="mb-6 rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold text-gray-900">Website Installation</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Copy the public API key or installation code to connect this assistant to a client website.
+            </p>
+          </div>
+          <div className="space-y-6">
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <label className="block text-sm font-medium text-gray-900">Public API Key</label>
+                <button type="button" onClick={() => copyToClipboard(assistant.publicApiKey ?? "", "api-key")}
+                  disabled={!assistant.publicApiKey}
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                  {copiedItem === "api-key" ? "Copied!" : "Copy API Key"}
+                </button>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                <code className="break-all text-sm text-gray-700">
+                  {assistant.publicApiKey || "No public API key has been generated yet."}
+                </code>
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <label className="block text-sm font-medium text-gray-900">Website Installation Code</label>
+                <button type="button" onClick={() => copyToClipboard(getInstallationCode(), "install-code")}
+                  disabled={!assistant.publicApiKey}
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                  {copiedItem === "install-code" ? "Copied!" : "Copy Installation Code"}
+                </button>
+              </div>
+              <pre className="overflow-x-auto rounded-lg border border-gray-200 bg-gray-950 p-4 text-xs leading-6 text-gray-100">
+                <code>{getInstallationCode()}</code>
+              </pre>
+            </div>
+            <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-800">
+              <p className="font-medium">How to install</p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5">
+                <li>Deploy Trevos Assistant to its live production URL.</li>
+                <li>Open this dashboard on that live domain and copy the installation code.</li>
+                <li>Paste the code into the client website where the assistant should appear.</li>
+                <li>Save the website and test the assistant.</li>
+              </ol>
+              <p className="mt-3">
+                Do not use a localhost URL on a client website. The public API key identifies the assistant; never include private server credentials in client-side code.
+              </p>
             </div>
           </div>
         </section>
