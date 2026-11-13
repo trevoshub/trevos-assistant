@@ -12,6 +12,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@google/genai": "^2.32.0",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "next": "15.3.8",

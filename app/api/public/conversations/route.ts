@@ -1,11 +1,22 @@
+
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+export const runtime = "nodejs";
+
+const GEMINI_MODEL = "gemini-3.5-flash-lite";
+
+function getGeminiClient() {
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
+
+  return new GoogleGenAI({ apiKey });
+}
 
 async function getAssistantFromApiKey(request: Request) {
   const publicApiKey = request.headers.get("x-trevos-api-key");
@@ -36,6 +47,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const action = body.action;
 
+    // CREATE CONVERSATION
     if (action === "create") {
       const visitorName = body.visitorName?.trim() || null;
       const visitorEmail = body.visitorEmail?.trim() || null;
@@ -76,6 +88,7 @@ export async function POST(request: Request) {
       });
     }
 
+    // SUBMIT LEAD
     if (action === "submitLead") {
       const conversationId = Number(body.conversationId);
       const visitorName = body.visitorName?.trim() || null;
@@ -143,13 +156,8 @@ export async function POST(request: Request) {
         },
       });
 
-      /*
-       * Lead notification
-       *
-       * A lead has already been created successfully at this point.
-       * Notification failure must not cause the lead submission itself
-       * to fail.
-       */
+      // LEAD EMAIL NOTIFICATION
+      // Notification failure must not undo a successfully created lead.
       if (
         assistant.notificationsEnabled &&
         assistant.emailNotificationsEnabled &&
@@ -176,6 +184,14 @@ Conversation ID: ${conversation.id}
 Captured: ${lead.createdAt.toLocaleString()}
 `;
 
+        const escapeHtml = (value: string) =>
+          value
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+
         const emailHtml = `
           <div style="font-family: Arial, sans-serif; line-height: 1.6;">
             <h2>New Lead Captured</h2>
@@ -187,19 +203,19 @@ Captured: ${lead.createdAt.toLocaleString()}
             <table style="border-collapse: collapse; width: 100%; max-width: 600px;">
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Name</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${lead.name}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(lead.name)}</td>
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Email</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${lead.email || "Not provided"}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(lead.email || "Not provided")}</td>
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Phone</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${lead.phone || "Not provided"}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(lead.phone || "Not provided")}</td>
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Interest</strong></td>
-                <td style="padding: 8px; border: 1px solid #ddd;">${lead.interest || "Not provided"}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(lead.interest || "Not provided")}</td>
               </tr>
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Lead ID</strong></td>
@@ -261,9 +277,11 @@ Captured: ${lead.createdAt.toLocaleString()}
       });
     }
 
+    // SEND MESSAGE TO GEMINI
     if (action === "message") {
       const conversationId = Number(body.conversationId);
-      const content = body.content?.trim();
+      const content =
+        typeof body.content === "string" ? body.content.trim() : "";
 
       if (!conversationId || !content) {
         return NextResponse.json(
@@ -288,6 +306,7 @@ Captured: ${lead.createdAt.toLocaleString()}
         );
       }
 
+      // Save visitor message.
       const visitorMessage = await prisma.message.create({
         data: {
           conversationId,
@@ -305,6 +324,7 @@ Captured: ${lead.createdAt.toLocaleString()}
         },
       });
 
+      // Retrieve active company knowledge.
       const knowledgeItems = await prisma.knowledgeItem.findMany({
         where: {
           assistantId: assistant.id,
@@ -319,6 +339,7 @@ Captured: ${lead.createdAt.toLocaleString()}
         },
       });
 
+      // Retrieve conversation history.
       const previousMessages = await prisma.message.findMany({
         where: {
           conversationId,
@@ -332,6 +353,7 @@ Captured: ${lead.createdAt.toLocaleString()}
         },
       });
 
+      // Check whether a lead already exists.
       const existingLead = await prisma.lead.findFirst({
         where: {
           conversationId,
@@ -371,10 +393,7 @@ Captured: ${lead.createdAt.toLocaleString()}
         assistant.collectInterest ? "interest" : null,
       ].filter(Boolean);
 
-      const response = await openai.responses.create({
-        model: "gpt-5.6-luna",
-
-        instructions: `${systemInstructions}
+      const instructions = `${systemInstructions}
 
 IMPORTANT RULES:
 - Use the company knowledge provided below as your primary source of information.
@@ -399,54 +418,53 @@ LEAD CAPTURE:
 - Do not say phrases such as "Please share your name", "Please provide your email", "Give us your phone number", or similar requests for individual fields.
 - Only ask for personal details through the lead capture form.
 - Configured fields: ${
-          configuredFields.length
-            ? configuredFields.join(", ")
-            : "none"
-        }
+        configuredFields.length
+          ? configuredFields.join(", ")
+          : "none"
+      }
 - Never repeatedly ask for details.
 - Do not pressure the visitor.
 
-Your response must follow the required JSON structure.
-
 COMPANY KNOWLEDGE:
-${knowledgeContext}`,
+${knowledgeContext}`;
 
-        input: `CONVERSATION SO FAR:
+      // Generate a structured response using Google Gemini.
+      const gemini = getGeminiClient();
+
+      const response = await gemini.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: `CONVERSATION SO FAR:
 ${conversationContext}
 
 LATEST VISITOR MESSAGE:
 ${content}`,
-
-        text: {
-          format: {
-            type: "json_schema",
-            name: "assistant_response",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                reply: {
-                  type: "string",
-                  description:
-                    "The natural response that should be shown to the visitor.",
-                },
-                leadCapture: {
-                  type: "boolean",
-                  description:
-                    "Whether the application should invite the visitor to provide their configured lead details.",
-                },
+        config: {
+          systemInstruction: instructions,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              reply: {
+                type: "STRING",
+                description:
+                  "The natural response that should be shown to the visitor.",
               },
-              required: ["reply", "leadCapture"],
-              additionalProperties: false,
+              leadCapture: {
+                type: "BOOLEAN",
+                description:
+                  "Whether the application should invite the visitor to provide their configured lead details.",
+              },
             },
+            required: ["reply", "leadCapture"],
+            propertyOrdering: ["reply", "leadCapture"],
           },
         },
       });
 
-      const rawOutput = response.output_text?.trim();
+      const rawOutput = response.text?.trim();
 
       if (!rawOutput) {
-        throw new Error("The AI returned an empty response.");
+        throw new Error("Gemini returned an empty response.");
       }
 
       let aiResult: {
@@ -457,18 +475,23 @@ ${content}`,
       try {
         aiResult = JSON.parse(rawOutput);
       } catch {
-        throw new Error("The AI returned an invalid structured response.");
+        throw new Error("Gemini returned an invalid structured response.");
       }
 
-      if (!aiResult.reply) {
-        throw new Error("The AI returned an empty reply.");
+      if (
+        typeof aiResult.reply !== "string" ||
+        !aiResult.reply.trim() ||
+        typeof aiResult.leadCapture !== "boolean"
+      ) {
+        throw new Error("Gemini returned an incomplete structured response.");
       }
 
+      // Save assistant response.
       const assistantMessage = await prisma.message.create({
         data: {
           conversationId,
           sender: "assistant",
-          content: aiResult.reply,
+          content: aiResult.reply.trim(),
         },
       });
 
@@ -484,7 +507,7 @@ ${content}`,
       return NextResponse.json({
         visitorMessage,
         message: assistantMessage,
-        leadCapture: aiResult.leadCapture,
+        leadCapture: aiResult.leadCapture && leadCaptureAvailable,
       });
     }
 
