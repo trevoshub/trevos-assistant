@@ -1,5 +1,5 @@
 
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
@@ -157,7 +157,7 @@ export async function POST(request: Request) {
       });
 
       // LEAD EMAIL NOTIFICATION
-      // Notification failure must not undo a successfully created lead.
+      // Save a pending notification, then send the email after returning the response.
       if (
         assistant.notificationsEnabled &&
         assistant.emailNotificationsEnabled &&
@@ -182,6 +182,8 @@ Interest: ${lead.interest || "Not provided"}
 Lead ID: ${lead.id}
 Conversation ID: ${conversation.id}
 Captured: ${lead.createdAt.toLocaleString()}
+
+${notificationMessage}
 `;
 
         const escapeHtml = (value: string) =>
@@ -195,11 +197,8 @@ Captured: ${lead.createdAt.toLocaleString()}
         const emailHtml = `
           <div style="font-family: Arial, sans-serif; line-height: 1.6;">
             <h2>New Lead Captured</h2>
-
             <p>A new lead has been captured by Trevos Assistant.</p>
-
             <h3>Lead Details</h3>
-
             <table style="border-collapse: collapse; width: 100%; max-width: 600px;">
               <tr>
                 <td style="padding: 8px; border: 1px solid #ddd;"><strong>Name</strong></td>
@@ -226,48 +225,63 @@ Captured: ${lead.createdAt.toLocaleString()}
                 <td style="padding: 8px; border: 1px solid #ddd;">${conversation.id}</td>
               </tr>
             </table>
+            <p>${escapeHtml(notificationMessage)}</p>
           </div>
         `;
 
-        const notification = await prisma.notification.create({
-          data: {
-            assistantId: assistant.id,
-            leadId: lead.id,
-            channel: "EMAIL",
-            recipient: assistant.notificationEmail,
-            message: notificationMessage,
-            status: "PENDING",
-          },
-        });
-
+        // If notification creation fails, keep the saved lead and still return success.
         try {
-          await sendEmail({
-            to: assistant.notificationEmail,
-            subject: emailSubject,
-            text: emailText,
-            html: emailHtml,
+          const notification = await prisma.notification.create({
+            data: {
+              assistantId: assistant.id,
+              leadId: lead.id,
+              channel: "EMAIL",
+              recipient: assistant.notificationEmail,
+              message: notificationMessage,
+              status: "PENDING",
+            },
           });
 
-          await prisma.notification.update({
-            where: {
-              id: notification.id,
-            },
-            data: {
-              status: "SENT",
-              sentAt: new Date(),
-            },
-          });
-        } catch (emailError) {
-          console.error("Lead notification email error:", emailError);
+          const notificationEmail = assistant.notificationEmail;
 
-          await prisma.notification.update({
-            where: {
-              id: notification.id,
-            },
-            data: {
-              status: "FAILED",
-            },
+          // Next.js runs this task after the response has been sent.
+          after(async () => {
+            try {
+              await sendEmail({
+                to: notificationEmail,
+                subject: emailSubject,
+                text: emailText,
+                html: emailHtml,
+              });
+
+              await prisma.notification.update({
+                where: { id: notification.id },
+                data: {
+                  status: "SENT",
+                  sentAt: new Date(),
+                },
+              });
+            } catch (emailError) {
+              console.error("Lead notification email error:", emailError);
+
+              try {
+                await prisma.notification.update({
+                  where: { id: notification.id },
+                  data: { status: "FAILED" },
+                });
+              } catch (updateError) {
+                console.error(
+                  "Failed to update notification status:",
+                  updateError
+                );
+              }
+            }
           });
+        } catch (notificationError) {
+          console.error(
+            "Unable to create lead email notification:",
+            notificationError
+          );
         }
       }
 
