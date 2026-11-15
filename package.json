@@ -21,7 +21,8 @@
     "openai": "^6.49.0",
     "prisma": "^6.19.3",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "resend": "^6.38.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

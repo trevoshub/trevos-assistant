@@ -1,16 +1,5 @@
-import nodemailer from "nodemailer";
 
-const smtpPort = Number(process.env.SMTP_PORT || 465);
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: smtpPort,
-  secure: process.env.SMTP_SECURE === "true",
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASSWORD,
-  },
-});
+import { Resend } from "resend";
 
 export async function sendEmail({
   to,
@@ -23,25 +12,47 @@ export async function sendEmail({
   text: string;
   html?: string;
 }) {
-  if (!process.env.SMTP_HOST) {
-    throw new Error("SMTP_HOST is not configured.");
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL;
+
+  if (!apiKey) {
+    throw new Error("RESEND_API_KEY is not configured.");
   }
 
-  if (!process.env.SMTP_USER) {
-    throw new Error("SMTP_USER is not configured.");
+  if (!from) {
+    throw new Error("RESEND_FROM_EMAIL is not configured.");
   }
 
-  if (!process.env.SMTP_PASSWORD) {
-    throw new Error("SMTP_PASSWORD is not configured.");
+  if (!to) {
+    throw new Error("Email recipient is required.");
   }
 
-  const info = await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  const resend = new Resend(apiKey);
+
+  const { data, error } = await resend.emails.send({
+    from,
     to,
     subject,
     text,
     html,
+    replyTo:
+      process.env.RESEND_REPLY_TO ||
+      "tassistant@trevoslimited.com",
   });
 
-  return info;
+  if (error) {
+    console.error("Resend email delivery error:", error);
+
+    throw new Error(
+      `Resend email delivery failed: ${error.message}`
+    );
+  }
+
+  console.log("Email successfully accepted by Resend:", {
+    id: data?.id,
+    recipient: to,
+    subject,
+  });
+
+  return data;
 }
