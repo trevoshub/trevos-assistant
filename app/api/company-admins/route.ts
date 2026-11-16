@@ -191,3 +191,36 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (session.user.role !== "SUPER_ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    const body = await request.json();
+    const userId = Number(body.userId);
+    const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return NextResponse.json({ error: "A valid administrator ID is required." }, { status: 400 });
+    }
+    if (newPassword.length < 8) {
+      return NextResponse.json({ error: "New password must be at least 8 characters." }, { status: 400 });
+    }
+
+    const admin = await prisma.user.findFirst({
+      where: { id: userId, role: "COMPANY_ADMIN" },
+      select: { id: true, name: true, email: true },
+    });
+    if (!admin) return NextResponse.json({ error: "Company Admin not found." }, { status: 404 });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    await prisma.user.update({ where: { id: admin.id }, data: { password: hashedPassword } });
+
+    return NextResponse.json({ message: "Company Admin password reset successfully." });
+  } catch (error) {
+    console.error("Reset Company Admin password error:", error);
+    return NextResponse.json({ error: "Unable to reset Company Admin password." }, { status: 500 });
+  }
+}

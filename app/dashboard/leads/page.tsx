@@ -1,8 +1,9 @@
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-type LeadStatus =
+type Status =
   | "NEW"
   | "CONTACTED"
   | "QUALIFIED"
@@ -15,7 +16,7 @@ type Lead = {
   email: string | null;
   phone: string | null;
   interest: string | null;
-  status: LeadStatus;
+  status: Status;
   createdAt: string;
   updatedAt: string;
   conversationId: number | null;
@@ -28,7 +29,21 @@ type Lead = {
   } | null;
 };
 
-const statuses: LeadStatus[] = [
+type LeadStats = {
+  total: number;
+  new: number;
+  inProgress: number;
+  converted: number;
+};
+
+type Pagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+const statuses: Status[] = [
   "NEW",
   "CONTACTED",
   "QUALIFIED",
@@ -39,16 +54,44 @@ const statuses: LeadStatus[] = [
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
-  const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [error, setError] = useState("");
 
-  async function loadLeads() {
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("ALL");
+
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(10);
+
+  const [pagination, setPagination] = useState<Pagination>({
+    page: 1,
+    pageSize: 10,
+    total: 0,
+    totalPages: 0,
+  });
+
+  const [stats, setStats] = useState<LeadStats>({
+    total: 0,
+    new: 0,
+    inProgress: 0,
+    converted: 0,
+  });
+
+  const [updating, setUpdating] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Lead | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
     try {
-      setLoading(true);
-      setError("");
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        search,
+        status: filter,
+      });
 
-      const response = await fetch("/api/leads");
-
+      const response = await fetch(`/api/leads?${params.toString()}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -56,31 +99,35 @@ export default function LeadsPage() {
       }
 
       setLeads(data.leads || []);
+      setPagination(data.pagination);
+      setStats(data.stats);
     } catch (err) {
-      console.error(err);
       setError(
-        err instanceof Error ? err.message : "Unable to load leads."
+        err instanceof Error
+          ? err.message
+          : "Unable to load leads."
       );
     } finally {
       setLoading(false);
     }
-  }
+  }, [page, pageSize, search, filter]);
 
-  async function updateStatus(
-    leadId: number,
-    status: LeadStatus
-  ) {
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function updateStatus(id: number, status: Status) {
+    setUpdating(id);
+    setError("");
+
     try {
-      setUpdatingId(leadId);
-      setError("");
-
       const response = await fetch("/api/leads", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          leadId,
+          leadId: id,
           status,
         }),
       });
@@ -88,185 +135,204 @@ export default function LeadsPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Unable to update lead.");
+        throw new Error(
+          data.error || "Unable to update lead."
+        );
       }
 
-      setLeads((currentLeads) =>
-        currentLeads.map((lead) =>
-          lead.id === leadId
-            ? {
-                ...lead,
-                status: data.lead.status,
-                updatedAt: data.lead.updatedAt,
-              }
-            : lead
-        )
+      setSelected((old) =>
+        old?.id === id
+          ? { ...old, status, updatedAt: data.lead.updatedAt }
+          : old
       );
+
+      await load();
     } catch (err) {
-      console.error(err);
       setError(
-        err instanceof Error ? err.message : "Unable to update lead."
+        err instanceof Error
+          ? err.message
+          : "Unable to update lead."
       );
     } finally {
-      setUpdatingId(null);
+      setUpdating(null);
     }
   }
 
-  useEffect(() => {
-    loadLeads();
-  }, []);
+  const firstItem =
+    pagination.total === 0
+      ? 0
+      : (pagination.page - 1) * pagination.pageSize + 1;
+
+  const lastItem = Math.min(
+    pagination.page * pagination.pageSize,
+    pagination.total
+  );
+
+  const pageNumbers = Array.from(
+    { length: pagination.totalPages },
+    (_, index) => index + 1
+  ).filter(
+    (number) =>
+      number === 1 ||
+      number === pagination.totalPages ||
+      Math.abs(number - page) <= 1
+  );
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-6 flex items-center justify-between">
+    <div className="ta-page">
+      <div className="ta-page-heading">
+        <div>
+          <p className="ta-eyebrow">CUSTOMER PIPELINE</p>
+          <h1>Leads</h1>
+          <p>
+            Review prospects captured by your AI assistant and track
+            their progress.
+          </p>
+        </div>
+
+        <button
+          className="ta-button secondary"
+          onClick={load}
+          disabled={loading}
+        >
+          ↻ Refresh
+        </button>
+      </div>
+
+      <div className="ta-stats-grid ta-stats-compact">
+        <div className="ta-stat-card">
+          <div className="ta-stat-top">
+            <span>Total leads</span>
+            <i>◉</i>
+          </div>
+          <strong>{stats.total}</strong>
+          <small>All captured prospects</small>
+        </div>
+
+        <div className="ta-stat-card">
+          <div className="ta-stat-top">
+            <span>New</span>
+            <i>✦</i>
+          </div>
+          <strong>{stats.new}</strong>
+          <small>Awaiting first contact</small>
+        </div>
+
+        <div className="ta-stat-card">
+          <div className="ta-stat-top">
+            <span>In progress</span>
+            <i>↗</i>
+          </div>
+          <strong>{stats.inProgress}</strong>
+          <small>Contacted or qualified</small>
+        </div>
+
+        <div className="ta-stat-card">
+          <div className="ta-stat-top">
+            <span>Converted</span>
+            <i>✓</i>
+          </div>
+          <strong>{stats.converted}</strong>
+          <small>Successful conversions</small>
+        </div>
+      </div>
+
+      {error && <div className="ta-alert error">{error}</div>}
+
+      <section className="ta-panel">
+        <div className="ta-panel-heading">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Leads
-            </h1>
-
-            <p className="mt-1 text-sm text-gray-600">
-              Manage leads captured by your AI assistant.
+            <h2>Prospect directory</h2>
+            <p>
+              Showing {firstItem}–{lastItem} of {pagination.total} leads
             </p>
           </div>
+        </div>
 
-          <button
-            onClick={loadLeads}
-            disabled={loading}
-            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        <div className="ta-toolbar">
+          <div className="ta-search">
+            <span>⌕</span>
+            <input
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Search name, email, phone or interest…"
+            />
+          </div>
+
+          <select
+            value={filter}
+            onChange={(event) => {
+              setFilter(event.target.value);
+              setPage(1);
+            }}
           >
-            {loading ? "Loading..." : "Refresh"}
-          </button>
+            <option value="ALL">All statuses</option>
+            {statuses.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
         </div>
 
-        {error && (
-          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {error}
+        {loading ? (
+          <div className="ta-empty">Loading leads…</div>
+        ) : leads.length === 0 ? (
+          <div className="ta-empty">
+            <strong>No matching leads</strong>
+            <span>Try changing your search or filters.</span>
           </div>
-        )}
-
-        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-gray-500">Total Leads</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">
-              {leads.length}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-gray-500">New</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">
-              {leads.filter((lead) => lead.status === "NEW").length}
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-gray-500">Contacted</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">
-              {
-                leads.filter(
-                  (lead) => lead.status === "CONTACTED"
-                ).length
-              }
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-gray-500">Converted</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">
-              {
-                leads.filter(
-                  (lead) => lead.status === "CONVERTED"
-                ).length
-              }
-            </p>
-          </div>
-        </div>
-
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-          {loading ? (
-            <div className="p-8 text-center text-sm text-gray-500">
-              Loading leads...
-            </div>
-          ) : leads.length === 0 ? (
-            <div className="p-8 text-center">
-              <p className="font-medium text-gray-900">
-                No leads yet
-              </p>
-
-              <p className="mt-1 text-sm text-gray-500">
-                Leads captured by your AI assistant will appear here.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+        ) : (
+          <>
+            <div className="ta-table-wrap">
+              <table className="ta-table">
+                <thead>
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Lead
-                    </th>
-
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Contact
-                    </th>
-
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Interest
-                    </th>
-
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Status
-                    </th>
-
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Captured
-                    </th>
-
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Conversation
-                    </th>
+                    <th>Prospect</th>
+                    <th>Contact details</th>
+                    <th>Interest</th>
+                    <th>Lead status</th>
+                    <th>Captured</th>
+                    <th>Conversation</th>
                   </tr>
                 </thead>
 
-                <tbody className="divide-y divide-gray-200 bg-white">
+                <tbody>
                   {leads.map((lead) => (
-                    <tr key={lead.id} className="hover:bg-gray-50">
-                      <td className="whitespace-nowrap px-6 py-4">
-                        <div className="font-medium text-gray-900">
-                          {lead.name}
-                        </div>
-
-                        <div className="text-xs text-gray-500">
-                          Lead #{lead.id}
-                        </div>
+                    <tr key={lead.id}>
+                      <td>
+                        <button
+                          className="ta-text-link"
+                          onClick={() => setSelected(lead)}
+                        >
+                          <strong>{lead.name}</strong>
+                          <small>Lead #{lead.id}</small>
+                        </button>
                       </td>
 
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-900">
-                          {lead.email || "No email"}
-                        </div>
-
-                        <div className="text-sm text-gray-500">
-                          {lead.phone || "No phone"}
-                        </div>
+                      <td>
+                        <span>{lead.email || "No email"}</span>
+                        <small>{lead.phone || "No phone"}</small>
                       </td>
 
-                      <td className="px-6 py-4 text-sm text-gray-700">
+                      <td className="ta-interest">
                         {lead.interest || "Not provided"}
                       </td>
 
-                      <td className="px-6 py-4">
+                      <td>
                         <select
+                          className="ta-status-select"
                           value={lead.status}
-                          disabled={updatingId === lead.id}
+                          disabled={updating === lead.id}
                           onChange={(event) =>
                             updateStatus(
                               lead.id,
-                              event.target.value as LeadStatus
+                              event.target.value as Status
                             )
                           }
-                          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-gray-500 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {statuses.map((status) => (
                             <option key={status} value={status}>
@@ -276,24 +342,20 @@ export default function LeadsPage() {
                         </select>
                       </td>
 
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                        {new Date(
-                          lead.createdAt
-                        ).toLocaleString()}
+                      <td>
+                        {new Date(lead.createdAt).toLocaleDateString()}
                       </td>
 
-                      <td className="px-6 py-4">
+                      <td>
                         {lead.conversationId ? (
                           <a
+                            className="ta-inline-link"
                             href={`/dashboard/conversations?conversationId=${lead.conversationId}`}
-                            className="text-sm font-medium text-blue-600 hover:text-blue-800"
                           >
-                            View conversation
+                            View chat ↗
                           </a>
                         ) : (
-                          <span className="text-sm text-gray-400">
-                            None
-                          </span>
+                          "—"
                         )}
                       </td>
                     </tr>
@@ -301,9 +363,151 @@ export default function LeadsPage() {
                 </tbody>
               </table>
             </div>
-          )}
+
+            {pagination.totalPages > 1 && (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "12px",
+                  padding: "18px 4px 4px",
+                }}
+              >
+                <span style={{ fontSize: "13px", color: "#64748b" }}>
+                  Page {pagination.page} of {pagination.totalPages}
+                </span>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "6px",
+                  }}
+                >
+                  <button
+                    className="ta-button secondary"
+                    disabled={page <= 1 || loading}
+                    onClick={() => setPage((current) => current - 1)}
+                  >
+                    Previous
+                  </button>
+
+                  {pageNumbers.map((number, index) => {
+                    const previous = pageNumbers[index - 1];
+
+                    return (
+                      <span
+                        key={number}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                        }}
+                      >
+                        {previous && number - previous > 1 && (
+                          <span style={{ color: "#64748b" }}>…</span>
+                        )}
+
+                        <button
+                          className={
+                            number === page
+                              ? "ta-button primary"
+                              : "ta-button secondary"
+                          }
+                          disabled={loading}
+                          onClick={() => setPage(number)}
+                        >
+                          {number}
+                        </button>
+                      </span>
+                    );
+                  })}
+
+                  <button
+                    className="ta-button secondary"
+                    disabled={
+                      page >= pagination.totalPages || loading
+                    }
+                    onClick={() => setPage((current) => current + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
+      {selected && (
+        <div className="ta-modal-backdrop">
+          <section
+            className="ta-modal"
+            role="dialog"
+            aria-modal="true"
+          >
+            <button
+              className="ta-modal-close"
+              onClick={() => setSelected(null)}
+            >
+              ×
+            </button>
+
+            <p className="ta-eyebrow">
+              LEAD PROFILE · #{selected.id}
+            </p>
+
+            <h2>{selected.name}</h2>
+
+            <p className="ta-modal-sub">
+              {selected.email || "No email"} ·{" "}
+              {selected.phone || "No phone"}
+            </p>
+
+            <div className="ta-detail-list">
+              <div>
+                <span>Interest</span>
+                <strong>
+                  {selected.interest || "Not provided"}
+                </strong>
+              </div>
+
+              <div>
+                <span>Status</span>
+                <strong>{selected.status}</strong>
+              </div>
+
+              <div>
+                <span>Captured</span>
+                <strong>
+                  {new Date(selected.createdAt).toLocaleString()}
+                </strong>
+              </div>
+
+              <div>
+                <span>Conversation</span>
+                <strong>
+                  {selected.conversationId
+                    ? `#${selected.conversationId}`
+                    : "Not linked"}
+                </strong>
+              </div>
+            </div>
+
+            {selected.conversationId && (
+              <a
+                className="ta-button primary ta-full-button"
+                href={`/dashboard/conversations?conversationId=${selected.conversationId}`}
+              >
+                Open conversation
+              </a>
+            )}
+          </section>
         </div>
-      </div>
-    </main>
+      )}
+    </div>
   );
 }

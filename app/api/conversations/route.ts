@@ -1,3 +1,4 @@
+
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
@@ -58,7 +59,8 @@ async function getCompanyAssistant() {
   };
 }
 
-export async function GET() {
+// GET: Paginated conversation list and individual conversation history
+export async function GET(request: Request) {
   try {
     const result = await getCompanyAssistant();
 
@@ -67,26 +69,152 @@ export async function GET() {
     }
 
     const { assistant } = result;
+    const { searchParams } = new URL(request.url);
 
-    const conversations = await prisma.conversation.findMany({
-      where: {
-        assistantId: assistant.id,
-      },
-      include: {
-        messages: {
-          orderBy: {
-            createdAt: "asc",
+    // Load a specific conversation with its complete message history.
+    if (searchParams.has("conversationId")) {
+      const conversationId = Number(
+        searchParams.get("conversationId")
+      );
+
+      if (
+        !Number.isInteger(conversationId) ||
+        conversationId <= 0
+      ) {
+        return NextResponse.json(
+          { error: "Invalid conversation ID." },
+          { status: 400 }
+        );
+      }
+
+      const conversation = await prisma.conversation.findFirst({
+        where: {
+          id: conversationId,
+          assistantId: assistant.id,
+        },
+        include: {
+          messages: {
+            orderBy: {
+              createdAt: "asc",
+            },
+          },
+          leads: true,
+        },
+      });
+
+      if (!conversation) {
+        return NextResponse.json(
+          { error: "Conversation not found." },
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json({
+        conversation,
+      });
+    }
+
+    // Read pagination and search parameters.
+    const requestedPage = Number(
+      searchParams.get("page")
+    );
+
+    const requestedPageSize = Number(
+      searchParams.get("pageSize")
+    );
+
+    const page =
+      Number.isInteger(requestedPage) && requestedPage > 0
+        ? requestedPage
+        : 1;
+
+    const pageSize =
+      Number.isInteger(requestedPageSize) &&
+      requestedPageSize > 0
+        ? Math.min(requestedPageSize, 50)
+        : 10;
+
+    const search = (
+      searchParams.get("search") || ""
+    ).trim();
+
+    // Build company-specific search conditions.
+    const where = {
+      assistantId: assistant.id,
+      ...(search
+        ? {
+            OR: [
+              {
+                visitorName: {
+                  contains: search,
+                  mode: "insensitive" as const,
+                },
+              },
+              {
+                visitorEmail: {
+                  contains: search,
+                  mode: "insensitive" as const,
+                },
+              },
+              {
+                visitorPhone: {
+                  contains: search,
+                  mode: "insensitive" as const,
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    // Retrieve only the conversations needed for this page.
+    const [conversations, total] = await prisma.$transaction([
+      prisma.conversation.findMany({
+        where,
+        select: {
+          id: true,
+          assistantId: true,
+          visitorName: true,
+          visitorEmail: true,
+          visitorPhone: true,
+          startedAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              messages: true,
+            },
           },
         },
-        leads: true,
-      },
-      orderBy: {
-        updatedAt: "desc",
-      },
-    });
+        orderBy: {
+          updatedAt: "desc",
+        },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+
+      prisma.conversation.count({
+        where,
+      }),
+    ]);
 
     return NextResponse.json({
-      conversations,
+      conversations: conversations.map((conversation) => ({
+        id: conversation.id,
+        assistantId: conversation.assistantId,
+        visitorName: conversation.visitorName,
+        visitorEmail: conversation.visitorEmail,
+        visitorPhone: conversation.visitorPhone,
+        startedAt: conversation.startedAt,
+        updatedAt: conversation.updatedAt,
+        messageCount: conversation._count.messages,
+      })),
+
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
     });
   } catch (error) {
     console.error("Get conversations error:", error);
@@ -98,6 +226,7 @@ export async function GET() {
   }
 }
 
+// POST: Create conversations and add messages.
 export async function POST(request: Request) {
   try {
     const result = await getCompanyAssistant();
@@ -115,6 +244,7 @@ export async function POST(request: Request) {
         ? body.action.trim()
         : "create";
 
+    // Add a message to an existing conversation.
     if (action === "message") {
       const conversationId = Number(body.conversationId);
 
@@ -200,6 +330,7 @@ export async function POST(request: Request) {
       );
     }
 
+    // Create a new conversation.
     if (action !== "create") {
       return NextResponse.json(
         { error: "Invalid conversation action." },

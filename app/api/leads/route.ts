@@ -1,3 +1,4 @@
+
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
@@ -36,12 +37,8 @@ async function getCompanyAssistant() {
   }
 
   const assistant = await prisma.assistant.findFirst({
-    where: {
-      companyId,
-    },
-    orderBy: {
-      createdAt: "asc",
-    },
+    where: { companyId },
+    orderBy: { createdAt: "asc" },
   });
 
   if (!assistant) {
@@ -53,43 +50,138 @@ async function getCompanyAssistant() {
     };
   }
 
-  return {
-    assistant,
-  };
+  return { assistant };
 }
 
-export async function GET() {
+// GET: Paginated leads, search, filters and statistics
+export async function GET(request: Request) {
   try {
     const result = await getCompanyAssistant();
 
-    if (result.error) {
-      return result.error;
-    }
+    if (result.error) return result.error;
 
     const { assistant } = result;
+    const { searchParams } = new URL(request.url);
 
-    const leads = await prisma.lead.findMany({
-      where: {
-        assistantId: assistant.id,
-      },
-      include: {
-        conversation: {
-          select: {
-            id: true,
-            visitorName: true,
-            visitorEmail: true,
-            visitorPhone: true,
-            startedAt: true,
+    const page = Math.max(
+      1,
+      Number(searchParams.get("page")) || 1
+    );
+
+    const pageSize = Math.min(
+      50,
+      Math.max(1, Number(searchParams.get("pageSize")) || 10)
+    );
+
+    const search = (searchParams.get("search") || "").trim();
+    const status = (searchParams.get("status") || "ALL").toUpperCase();
+
+    const validStatuses = [
+      "NEW",
+      "CONTACTED",
+      "QUALIFIED",
+      "CONVERTED",
+      "LOST",
+    ];
+
+    if (status !== "ALL" && !validStatuses.includes(status)) {
+      return NextResponse.json(
+        { error: "Invalid lead status filter." },
+        { status: 400 }
+      );
+    }
+
+    const searchConditions = search
+      ? {
+          OR: [
+            { name: { contains: search, mode: "insensitive" as const } },
+            { email: { contains: search, mode: "insensitive" as const } },
+            { phone: { contains: search, mode: "insensitive" as const } },
+            { interest: { contains: search, mode: "insensitive" as const } },
+          ],
+        }
+      : {};
+
+    const where = {
+      assistantId: assistant.id,
+      ...(status !== "ALL"
+        ? { status: status as
+            | "NEW"
+            | "CONTACTED"
+            | "QUALIFIED"
+            | "CONVERTED"
+            | "LOST" }
+        : {}),
+      ...searchConditions,
+    };
+
+    const [leads, total, totalLeads, statusCounts] =
+      await prisma.$transaction([
+        prisma.lead.findMany({
+          where,
+          include: {
+            conversation: {
+              select: {
+                id: true,
+                visitorName: true,
+                visitorEmail: true,
+                visitorPhone: true,
+                startedAt: true,
+              },
+            },
           },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+          orderBy: { createdAt: "desc" },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+
+        prisma.lead.count({ where }),
+
+        prisma.lead.count({
+          where: { assistantId: assistant.id },
+        }),
+
+        prisma.lead.groupBy({
+  by: ["status"],
+  where: { assistantId: assistant.id },
+  orderBy: { status: "asc" },
+  _count: { _all: true },
+}),
+      ]);
+
+    const counts = {
+      NEW: 0,
+      CONTACTED: 0,
+      QUALIFIED: 0,
+      CONVERTED: 0,
+      LOST: 0,
+    };
+
+   for (const item of statusCounts) {
+  const count =
+    typeof item._count === "object" && item._count !== null
+      ? item._count._all ?? 0
+      : 0;
+
+  counts[item.status] = count;
+}
+
+    const totalPages = Math.ceil(total / pageSize);
 
     return NextResponse.json({
       leads,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages,
+      },
+      stats: {
+        total: totalLeads,
+        new: counts.NEW,
+        inProgress: counts.CONTACTED + counts.QUALIFIED,
+        converted: counts.CONVERTED,
+      },
     });
   } catch (error) {
     console.error("Get leads error:", error);
@@ -101,32 +193,24 @@ export async function GET() {
   }
 }
 
+// POST: Create a lead
 export async function POST(request: Request) {
   try {
     const result = await getCompanyAssistant();
 
-    if (result.error) {
-      return result.error;
-    }
+    if (result.error) return result.error;
 
     const { assistant } = result;
-
     const body = await request.json();
 
     const name =
-      typeof body.name === "string"
-        ? body.name.trim()
-        : "";
+      typeof body.name === "string" ? body.name.trim() : "";
 
     const email =
-      typeof body.email === "string"
-        ? body.email.trim()
-        : null;
+      typeof body.email === "string" ? body.email.trim() : null;
 
     const phone =
-      typeof body.phone === "string"
-        ? body.phone.trim()
-        : null;
+      typeof body.phone === "string" ? body.phone.trim() : null;
 
     const interest =
       typeof body.interest === "string"
@@ -166,13 +250,12 @@ export async function POST(request: Request) {
         );
       }
 
-      const conversation =
-        await prisma.conversation.findFirst({
-          where: {
-            id: conversationId,
-            assistantId: assistant.id,
-          },
-        });
+      const conversation = await prisma.conversation.findFirst({
+        where: {
+          id: conversationId,
+          assistantId: assistant.id,
+        },
+      });
 
       if (!conversation) {
         return NextResponse.json(
@@ -212,18 +295,15 @@ export async function POST(request: Request) {
   }
 }
 
+// PATCH: Update lead status
 export async function PATCH(request: Request) {
   try {
     const result = await getCompanyAssistant();
 
-    if (result.error) {
-      return result.error;
-    }
+    if (result.error) return result.error;
 
     const { assistant } = result;
-
     const body = await request.json();
-
     const leadId = Number(body.leadId);
 
     if (!leadId) {
@@ -268,9 +348,7 @@ export async function PATCH(request: Request) {
     }
 
     const updatedLead = await prisma.lead.update({
-      where: {
-        id: lead.id,
-      },
+      where: { id: lead.id },
       data: {
         status: status as
           | "NEW"
